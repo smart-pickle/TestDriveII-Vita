@@ -1,143 +1,160 @@
 #!/usr/bin/env python3
 """
-Generate LiveArea visual assets for Test Drive II: The Duel on PS Vita.
-Creates:
-  vpk/icon0.png   (128x128)
-  vpk/bg.png      (840x500)
-  vpk/startup.png (280x158)
+Generate official retail-style Sony PlayStation Vita LiveArea visual assets
+for Test Drive II: The Duel (1989).
+
+Produces:
+  vpk/bg.png       (840x500) - Full-bleed authentic 1989 Accolade cover art (Porsche 959 & Ferrari F40)
+  vpk/startup.png  (280x158) - Polished start gate with official The Duel: Test Drive II logo
+  vpk/icon0.png    (128x128) - Home Screen bubble icon with official logo & badge
 """
 
 import os
-from PIL import Image, ImageDraw, ImageFont
+import sys
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(SCRIPT_DIR)
+BOXART_PATH = os.path.join(SCRIPT_DIR, "boxart_front.jpg")
+OUTPUT_DIR = os.path.join(ROOT_DIR, "vpk")
 
 FONT_DIR = "/System/Library/Fonts/Supplemental"
 try:
-    FONT_TITLE_LG = ImageFont.truetype(f"{FONT_DIR}/Arial Bold.ttf", 38)
-    FONT_TITLE_MD = ImageFont.truetype(f"{FONT_DIR}/Arial Bold.ttf", 22)
-    FONT_TITLE_SM = ImageFont.truetype(f"{FONT_DIR}/Arial Bold.ttf", 15)
-    FONT_SUB_MD = ImageFont.truetype(f"{FONT_DIR}/Arial.ttf", 14)
-    FONT_SUB_SM = ImageFont.truetype(f"{FONT_DIR}/Arial.ttf", 10)
-    FONT_BADGE = ImageFont.truetype(f"{FONT_DIR}/Arial Bold.ttf", 11)
+    FONT_BADGE = ImageFont.truetype(f"{FONT_DIR}/Arial Bold.ttf", 8)
+    FONT_SUB = ImageFont.truetype(f"{FONT_DIR}/Arial Bold.ttf", 8)
 except Exception:
     default = ImageFont.load_default()
-    FONT_TITLE_LG = default
-    FONT_TITLE_MD = default
-    FONT_TITLE_SM = default
-    FONT_SUB_MD = default
-    FONT_SUB_SM = default
     FONT_BADGE = default
+    FONT_SUB = default
 
-def create_icon():
-    im = Image.new("RGB", (128, 128), (16, 20, 32))
+def load_and_prep_boxart():
+    if not os.path.exists(BOXART_PATH):
+        raise FileNotFoundError(f"Box art source not found at {BOXART_PATH}")
+
+    box = Image.open(BOXART_PATH).convert("RGB")
+    return box
+
+def extract_logo(box):
+    # 'The Duel / TEST DRIVE II' logo is at x: [380, 1450], y: [400, 750]
+    logo_crop = box.crop((380, 400, 1450, 750))
+    logo_rgba = logo_crop.convert("RGBA")
+    data = logo_rgba.getdata()
+    clean_data = []
+    for p in data:
+        # Dark asphalt road background is R, G, B < 48
+        if p[0] < 48 and p[1] < 48 and p[2] < 48:
+            clean_data.append((0, 0, 0, 0))
+        else:
+            clean_data.append(p)
+    logo_rgba.putdata(clean_data)
+    return logo_rgba
+
+def create_bg(box):
+    # Crop to 840x500 ratio (1.68)
+    # Include Porsche 959 (x: 700..1700, y: 800..1450) and cursive Accolade logo (y: 1450..1750)
+    # Bounding box width = 1760 (skip outer worn paper tears)
+    clean_box = box.crop((40, 720, 1800, 1807))
+    bg = clean_box.resize((840, 500), Image.Resampling.LANCZOS)
+
+    # Soft edge vignette for Vita system UI and top status bar
+    vignette = Image.new("RGBA", (840, 500), (0, 0, 0, 0))
+    v_draw = ImageDraw.Draw(vignette)
+    for y in range(75):
+        alpha = int(120 * ((75 - y) / 75.0) ** 1.5)
+        v_draw.line([(0, y), (839, y)], fill=(8, 10, 16, alpha))
+    for x in range(45):
+        alpha = int(110 * ((45 - x) / 45.0) ** 1.5)
+        v_draw.line([(x, 0), (x, 499)], fill=(8, 10, 16, alpha))
+    for x in range(45):
+        alpha = int(110 * (x / 45.0) ** 1.5)
+        v_draw.line([(839 - x, 0), (839 - x, 499)], fill=(8, 10, 16, alpha))
+
+    bg_final = Image.alpha_composite(bg.convert("RGBA"), vignette).convert("RGB")
+    out_path = os.path.join(OUTPUT_DIR, "bg.png")
+    bg_final.save(out_path)
+    print(f"Created {out_path} (840x500)")
+
+def create_startup(logo_rgba):
+    im = Image.new("RGB", (280, 158), (14, 16, 26))
+    draw = ImageDraw.Draw(im)
+
+    # Subtle dark asphalt gradient
+    for y in range(158):
+        ratio = y / 158.0
+        r = int(12 + ratio * 14)
+        g = int(14 + ratio * 12)
+        b = int(22 + ratio * 18)
+        draw.line([(0, y), (279, y)], fill=(r, g, b))
+
+    # Ferrari Red & Porsche Amber dual border
+    draw.rectangle([0, 0, 279, 157], outline=(255, 40, 40), width=2)
+    draw.rectangle([3, 3, 276, 154], outline=(255, 180, 0), width=1)
+
+    # Scale logo into upper half (leaves bottom y: 95..145 clear for blue Start button)
+    target_w = 230
+    target_h = int(logo_rgba.height * (target_w / logo_rgba.width))
+    scaled_logo = logo_rgba.resize((target_w, target_h), Image.Resampling.LANCZOS)
+    im.paste(scaled_logo, ((280 - target_w) // 2, 20), scaled_logo)
+
+    out_path = os.path.join(OUTPUT_DIR, "startup.png")
+    im.save(out_path)
+    print(f"Created {out_path} (280x158)")
+
+def create_icon(logo_rgba):
+    im = Image.new("RGB", (128, 128), (14, 16, 24))
     draw = ImageDraw.Draw(im)
 
     # Gradient background
     for y in range(128):
         ratio = y / 128.0
-        r = int(14 + ratio * 20)
-        g = int(18 + ratio * 16)
-        b = int(32 + ratio * 40)
+        r = int(12 + ratio * 16)
+        g = int(14 + ratio * 12)
+        b = int(22 + ratio * 14)
         draw.line([(0, y), (127, y)], fill=(r, g, b))
 
-    # Outer border
-    draw.rounded_rectangle([2, 2, 125, 125], radius=14, outline=(0, 212, 255), width=2)
-    draw.rounded_rectangle([5, 5, 122, 122], radius=11, outline=(40, 55, 80), width=1)
+    # Rounded borders (Ferrari Red & Porsche Amber)
+    draw.rounded_rectangle([2, 2, 125, 125], radius=14, outline=(255, 40, 40), width=2)
+    draw.rounded_rectangle([5, 5, 122, 122], radius=11, outline=(255, 180, 0), width=1)
 
-    # Racing stripes (Ferrari Red & Porsche Amber)
-    draw.line([(10, 22), (117, 22)], fill=(255, 40, 40), width=2)
-    draw.line([(10, 26), (117, 26)], fill=(255, 180, 0), width=1)
+    # Racing stripes
+    draw.line([(12, 18), (115, 18)], fill=(255, 40, 40), width=2)
+    draw.line([(12, 22), (115, 22)], fill=(255, 180, 0), width=1)
 
-    # "TEST DRIVE"
-    draw.text((16, 32), "TEST", font=FONT_TITLE_SM, fill=(255, 255, 255))
-    draw.text((64, 32), "DRIVE", font=FONT_TITLE_SM, fill=(0, 212, 255))
+    # Scaled logo
+    target_w = 114
+    target_h = int(logo_rgba.height * (target_w / logo_rgba.width))
+    scaled_logo = logo_rgba.resize((target_w, target_h), Image.Resampling.LANCZOS)
+    im.paste(scaled_logo, ((128 - target_w) // 2, 34), scaled_logo)
 
-    # Big "II" roman numeral
-    draw.text((54, 52), "II", font=FONT_TITLE_MD, fill=(255, 215, 0))
+    # Badges
+    draw.rounded_rectangle([14, 78, 114, 96], radius=3, fill=(220, 35, 35), outline=(255, 100, 100), width=1)
+    draw.text((18, 83), "FERRARI vs PORSCHE", font=FONT_BADGE, fill=(255, 255, 255))
 
-    # "THE DUEL" badge
-    draw.rounded_rectangle([18, 86, 110, 106], radius=4, fill=(220, 35, 35), outline=(255, 100, 100), width=1)
-    draw.text((28, 89), "THE DUEL", font=FONT_BADGE, fill=(255, 255, 255))
+    draw.text((24, 105), "ACCOLADE 1989", font=FONT_SUB, fill=(160, 180, 210))
 
-    # Bottom subtext
-    draw.text((24, 110), "ACCOLADE 1989", font=FONT_SUB_SM, fill=(160, 180, 210))
+    out_path = os.path.join(OUTPUT_DIR, "icon0.png")
+    im.save(out_path)
+    print(f"Created {out_path} (128x128)")
 
-    os.makedirs("vpk", exist_ok=True)
-    im.save("vpk/icon0.png")
-    print("Created vpk/icon0.png (128x128)")
+def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    box = load_and_prep_boxart()
+    logo = extract_logo(box)
 
-def create_startup():
-    im = Image.new("RGB", (280, 158), (14, 18, 28))
-    draw = ImageDraw.Draw(im)
+    create_bg(box)
+    create_startup(logo)
+    create_icon(logo)
 
-    # Gradient background
-    for y in range(158):
-        ratio = y / 158.0
-        r = int(12 + ratio * 24)
-        g = int(16 + ratio * 20)
-        b = int(28 + ratio * 48)
-        draw.line([(0, y), (279, y)], fill=(r, g, b))
-
-    # Perspective road lines
-    for y in range(95, 158, 12):
-        draw.line([(0, y), (279, y)], fill=(35, 48, 75))
-    draw.line([(140, 95), (30, 157)], fill=(0, 212, 255), width=2)
-    draw.line([(140, 95), (250, 157)], fill=(0, 212, 255), width=2)
-    draw.line([(140, 95), (140, 157)], fill=(255, 215, 0), width=2)
-
-    # Frame border
-    draw.rectangle([0, 0, 279, 157], outline=(0, 212, 255), width=2)
-
-    # Title
-    draw.text((26, 18), "TEST DRIVE II", font=FONT_TITLE_MD, fill=(255, 255, 255))
-    draw.rounded_rectangle([26, 50, 130, 72], radius=4, fill=(220, 35, 35))
-    draw.text((36, 54), "THE DUEL", font=FONT_BADGE, fill=(255, 255, 255))
-
-    draw.text((140, 54), "FERRARI F40 vs. PORSCHE 959", font=FONT_SUB_SM, fill=(200, 220, 255))
-
-    im.save("vpk/startup.png")
-    print("Created vpk/startup.png (280x158)")
-
-def create_bg():
-    im = Image.new("RGB", (840, 500), (12, 16, 26))
-    draw = ImageDraw.Draw(im)
-
-    # Synthwave gradient
-    for y in range(500):
-        ratio = y / 500.0
-        r = int(10 + ratio * 32)
-        g = int(14 + ratio * 24)
-        b = int(26 + ratio * 60)
-        draw.line([(0, y), (839, y)], fill=(r, g, b))
-
-    # Perspective highway grid at bottom
-    horizon = 270
-    for y in range(horizon, 500, 20):
-        y_scaled = horizon + int((y - horizon) ** 1.3 * 0.7)
-        if y_scaled < 500:
-            draw.line([(0, y_scaled), (839, y_scaled)], fill=(35, 52, 85), width=1)
-    for x in range(0, 841, 60):
-        draw.line([(420 + (x - 420) // 5, horizon), (x, 499)], fill=(32, 46, 75), width=1)
-
-    # Sun / Glow at horizon
-    draw.ellipse([340, horizon - 80, 500, horizon + 80], fill=(45, 60, 100))
-
-    # LiveArea Gate Title
-    draw.text((60, 50), "TEST DRIVE II: THE DUEL", font=FONT_TITLE_LG, fill=(255, 255, 255))
-    draw.rounded_rectangle([60, 105, 185, 132], radius=5, fill=(220, 35, 35), outline=(255, 100, 100), width=1)
-    draw.text((72, 110), "EGA ENHANCED", font=FONT_BADGE, fill=(255, 255, 255))
-
-    draw.text((200, 110), "PlayStation®Vita Community Edition", font=FONT_SUB_MD, fill=(0, 212, 255))
-    draw.line([(60, 145), (780, 145)], fill=(45, 60, 90), width=1)
-
-    # Info highlights
-    draw.text((60, 165), "• Head-to-Head Exotic Supercar Racing (Ferrari F40 vs. Porsche 959)", font=FONT_SUB_MD, fill=(220, 230, 245))
-    draw.text((60, 195), "• Native 960x544 Tri-Mode Display Engine (4:3 Pillarbox, 2x Integer, 16:9 Stretch)", font=FONT_SUB_MD, fill=(220, 230, 245))
-    draw.text((60, 225), "• Full Analog Steering, Pedals & Manual Transmission Support", font=FONT_SUB_MD, fill=(220, 230, 245))
-
-    im.save("vpk/bg.png")
-    print("Created vpk/bg.png (840x500)")
+    # Convert to 8-bit palette-indexed for strict Sony TRC compliance
+    converter = os.path.join(SCRIPT_DIR, "convert_to_8bit_png.py")
+    if os.path.exists(converter):
+        import subprocess
+        subprocess.check_call([
+            sys.executable, converter,
+            os.path.join(OUTPUT_DIR, "icon0.png"),
+            os.path.join(OUTPUT_DIR, "startup.png"),
+            os.path.join(OUTPUT_DIR, "bg.png")
+        ])
 
 if __name__ == "__main__":
-    create_icon()
-    create_startup()
-    create_bg()
+    main()
