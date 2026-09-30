@@ -1,0 +1,15 @@
+/build/
+/build-vita/
+/build-vita-clean/
+*.vpk
+*.self
+*.velf
+eboot.bin
+.DS_Store
+/Game/
+*.bak
+*.BAK
+*.log
+__pycache__/
+.vscode/
+.idea/
