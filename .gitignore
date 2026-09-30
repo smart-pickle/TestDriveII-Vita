@@ -13,3 +13,6 @@ eboot.bin
 __pycache__/
 .vscode/
 .idea/
+
+# Development and reverse engineering tools
+/tools/
